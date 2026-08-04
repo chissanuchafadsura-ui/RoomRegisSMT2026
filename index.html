@@ -31,7 +31,6 @@
     <style>
         body {
             background-color: #f4f9ff;
-            /* ลายพื้นหลังน่ารักๆ สไตล์ตาราง/จุด วิทยาศาสตร์เบาๆ */
             background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px), radial-gradient(#cbd5e1 1.5px, transparent 1.5px);
             background-size: 30px 30px;
             background-position: 0 0, 15px 15px;
@@ -68,7 +67,16 @@
             'Prefer': 'return=representation'
         };
 
-        // --- SVG Icons ---
+        // Helper Function ดึงข้อมูลคอลัมน์แบบยืดหยุ่น
+        const getVal = (obj, keys, defaultVal = '') => {
+            if (!obj) return defaultVal;
+            for (let key of keys) {
+                if (obj[key] !== undefined && obj[key] !== null) return obj[key];
+            }
+            return defaultVal;
+        };
+
+        // SVG Icons
         const Icons = {
             X: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>,
             User: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
@@ -76,11 +84,12 @@
         };
 
         function App() {
-            const [view, setView] = useState('home'); // 'home' | 'register'
+            const [view, setView] = useState('home');
             const [rooms, setRooms] = useState([]);
             const [registrations, setRegistrations] = useState([]);
             const [loading, setLoading] = useState(true);
             const [selectedRoom, setSelectedRoom] = useState(null);
+            const [fetchNotice, setFetchNotice] = useState(null);
             
             // Modal States
             const [modalMsg, setModalMsg] = useState('');
@@ -88,7 +97,6 @@
             const [idCardInput, setIdCardInput] = useState('');
 
             useEffect(() => {
-                // Set Favicon
                 let link = document.querySelector("link[rel~='icon']");
                 if (!link) {
                     link = document.createElement('link');
@@ -102,6 +110,7 @@
 
             const fetchInitialData = async () => {
                 setLoading(true);
+                setFetchNotice(null);
                 try {
                     const [resRoom, resRegis] = await Promise.all([
                         fetch(`${SUPABASE_URL}/room?select=*`, { headers }),
@@ -109,17 +118,21 @@
                     ]);
                     
                     if (resRoom.ok && resRegis.ok) {
-                        setRooms(await resRoom.json());
-                        setRegistrations(await resRegis.json());
+                        const roomData = await resRoom.json();
+                        const regisData = await resRegis.json();
+                        setRooms(roomData || []);
+                        setRegistrations(regisData || []);
+
+                        if (!roomData || roomData.length === 0) {
+                            setFetchNotice('ไม่พบข้อมูลในตาราง "room" (ตารางว่างเปล่า หรือ RLS ใน Supabase ปิดกั้นสิทธิ์อ่านข้อมูล)');
+                        }
                     } else {
                         const errRoomText = !resRoom.ok ? await resRoom.text() : '';
                         const errRegisText = !resRegis.ok ? await resRegis.text() : '';
-                        console.error('Supabase fetch error:', errRoomText, errRegisText);
-                        showAlert(`เกิดข้อผิดพลาดในการโหลดข้อมูล Supabase (Status: ${resRoom.status}/${resRegis.status})\n${errRoomText || errRegisText}`);
+                        setFetchNotice(`เกิดข้อผิดพลาดในการเชื่อมต่อ (Status: ${resRoom.status}/${resRegis.status})\n${errRoomText || errRegisText}`);
                     }
                 } catch (error) {
-                    console.error('Connection error:', error);
-                    showAlert(`ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้: ${error.message}`);
+                    setFetchNotice(`ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้: ${error.message}`);
                 }
                 setLoading(false);
             };
@@ -127,49 +140,67 @@
             const showAlert = (msg) => { setModalMsg(msg); };
             const closeAlert = () => { setModalMsg(''); };
 
-            // --- Home View ---
+            // Render หน้าแรก
             const renderHome = () => {
-                const teacherRooms = rooms.filter(r => r['สำหรับ'] === 'ครู');
-                const studentRooms = rooms.filter(r => r['สำหรับ'] === 'นักเรียน');
+                const teacherRooms = rooms.filter(r => {
+                    const target = String(getVal(r, ['สำหรับ', 'Target', 'target'], '')).trim();
+                    return target.includes('ครู');
+                });
+
+                const studentRooms = rooms.filter(r => {
+                    const target = String(getVal(r, ['สำหรับ', 'Target', 'target'], '')).trim();
+                    return target.includes('นักเรียน');
+                });
+
+                const otherRooms = rooms.filter(r => !teacherRooms.includes(r) && !studentRooms.includes(r));
 
                 const RoomCard = ({ room }) => {
-                    const occupants = registrations.filter(reg => reg['ห้องที่'] === room['ห้องที่']);
-                    const isFull = occupants.length >= room['จำนวนคน/ห้อง'];
+                    const roomNo = getVal(room, ['ห้องที่', 'room_no', 'id']);
+                    const roomName = getVal(room, ['ชื่อห้อง', 'ชื่อห้องพัก', 'room_name']);
+                    const gender = getVal(room, ['เพศ', 'gender']);
+                    const capacity = Number(getVal(room, ['จำนวนคน/ห้อง', 'จำนวนคน', 'capacity'], 1));
+
+                    const occupants = registrations.filter(reg => String(getVal(reg, ['ห้องที่', 'room_no'])) === String(roomNo));
+                    const isFull = occupants.length >= capacity;
 
                     return (
                         <div className={`glass-panel p-5 rounded-2xl border-2 transition-all ${isFull ? 'border-gray-200 opacity-80' : 'border-blue-100 hover:border-blue-300 hover:shadow-lg cursor-pointer'}`}
                              onClick={() => !isFull && handleSelectRoom(room)}>
                             <div className="flex justify-between items-start mb-3">
                                 <div>
-                                    <h3 className="text-lg font-bold text-blue-900">ห้องที่ {room['ห้องที่']}</h3>
-                                    <p className="text-sm text-gray-600">{room['ชื่อห้อง']}</p>
+                                    <h3 className="text-lg font-bold text-blue-900">ห้องที่ {roomNo}</h3>
+                                    <p className="text-sm text-gray-600">{roomName}</p>
                                 </div>
                                 <div className="text-right">
-                                    <span className={`text-xs px-2 py-1 rounded-full ${room['เพศ'] === 'ชาย' ? 'bg-blue-100 text-blue-700' : room['เพศ'] === 'หญิง' ? 'bg-pink-100 text-pink-700' : 'bg-purple-100 text-purple-700'}`}>
-                                        เพศ: {room['เพศ']}
+                                    <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${gender === 'ชาย' ? 'bg-blue-100 text-blue-700' : gender === 'หญิง' ? 'bg-pink-100 text-pink-700' : 'bg-purple-100 text-purple-700'}`}>
+                                        เพศ: {gender || 'ไม่ระบุ'}
                                     </span>
                                 </div>
                             </div>
                             
                             <div className="mb-4">
-                                <p className="text-sm font-medium text-gray-700 mb-2">จำนวนคน: {occupants.length} / {room['จำนวนคน/ห้อง']}</p>
+                                <p className="text-sm font-medium text-gray-700 mb-2">จำนวนคน: {occupants.length} / {capacity}</p>
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div className={`h-2 rounded-full ${isFull ? 'bg-red-400' : 'bg-green-400'}`} style={{ width: `${(occupants.length / room['จำนวนคน/ห้อง']) * 100}%` }}></div>
+                                    <div className={`h-2 rounded-full ${isFull ? 'bg-red-400' : 'bg-green-400'}`} style={{ width: `${capacity > 0 ? Math.min(100, (occupants.length / capacity) * 100) : 0}%` }}></div>
                                 </div>
                             </div>
 
                             <div className="space-y-2 mt-4 pt-4 border-t border-gray-100">
-                                {occupants.length > 0 ? occupants.map((occ, idx) => (
-                                    <div key={idx} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg text-sm text-gray-700 border border-gray-100" onClick={(e) => e.stopPropagation()}>
-                                        <div className="flex items-center gap-2">
-                                            <Icons.User />
-                                            <span>{occ['ชื่อ - สกุล']} (ชั้น {occ['ระดับชั้น']})</span>
+                                {occupants.length > 0 ? occupants.map((occ, idx) => {
+                                    const fullName = getVal(occ, ['ชื่อ - สกุล', 'ชื่อ-สกุล', 'fullname', 'name']);
+                                    const grade = getVal(occ, ['ระดับชั้น', 'class', 'grade']);
+                                    return (
+                                        <div key={idx} className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg text-sm text-gray-700 border border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                            <div className="flex items-center gap-2 overflow-hidden">
+                                                <Icons.User />
+                                                <span className="truncate">{fullName} {grade ? `(${grade})` : ''}</span>
+                                            </div>
+                                            <button onClick={() => confirmDelete(occ)} title="ลบการลงทะเบียน" className="text-red-400 hover:text-red-600 p-1 rounded-full hover:bg-red-50 transition-colors flex-shrink-0">
+                                                <Icons.X />
+                                            </button>
                                         </div>
-                                        <button onClick={() => confirmDelete(occ)} className="text-red-400 hover:text-red-600 p-1 rounded-full hover:bg-red-50 transition-colors">
-                                            <Icons.X />
-                                        </button>
-                                    </div>
-                                )) : <p className="text-xs text-gray-400 text-center py-2">ยังไม่มีผู้ลงทะเบียน</p>}
+                                    );
+                                }) : <p className="text-xs text-gray-400 text-center py-2">ยังไม่มีผู้ลงทะเบียน</p>}
                             </div>
                             
                             {isFull && <div className="mt-3 text-center text-sm text-red-500 font-medium">ห้องนี้เต็มแล้ว</div>}
@@ -179,30 +210,70 @@
 
                 return (
                     <div className="w-full max-w-6xl mx-auto px-4 py-8">
+                        {fetchNotice && (
+                            <div className="mb-8 p-5 bg-amber-50 border-2 border-amber-200 rounded-2xl text-amber-900 text-sm leading-relaxed shadow-sm">
+                                <p className="font-bold text-base mb-1 flex items-center gap-2 text-amber-800">
+                                    ⚠️ ไม่พบข้อมูลห้องพักในระบบ
+                                </p>
+                                <p className="mb-3">{fetchNotice}</p>
+                                <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs text-gray-700 space-y-1 mb-3">
+                                    <p className="font-bold text-gray-800">วิธีแก้ไขใน Supabase Dashboard:</p>
+                                    <p>1. เปิดเมนู <b>Table Editor</b> -&gt; เลือกตาราง <b>room</b>, <b>data</b>, และ <b>regis</b></p>
+                                    <p>2. กดปุ่ม <b>+ Add RLS policy</b> ที่มุมขวาบน -&gt; เลือก <b>Create policy from scratch</b></p>
+                                    <p>3. ตั้งชื่อ Policy และเลือก <b>Allowed operations: ALL</b> แล้วใส่ค่า <b>USING / WITH CHECK = true</b> เพื่อเปิดสิทธิ์อ่าน/เขียน</p>
+                                </div>
+                                <button onClick={fetchInitialData} className="px-4 py-2 bg-amber-600 text-white font-medium rounded-xl text-xs hover:bg-amber-700 transition-colors shadow-sm">
+                                    🔄 ลองดึงข้อมูลอีกครั้ง
+                                </button>
+                            </div>
+                        )}
+
                         <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-l-4 border-blue-500 pl-3">ห้องพักครู</h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-                            {teacherRooms.map(room => <RoomCard key={room['ห้องที่']} room={room} />)}
-                        </div>
+                        {teacherRooms.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+                                {teacherRooms.map((room, i) => <RoomCard key={i} room={room} />)}
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-400 mb-12 italic pl-4">ไม่มีรายการห้องพักครู</p>
+                        )}
 
                         <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-l-4 border-green-500 pl-3">ห้องพักนักเรียน</h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {studentRooms.map(room => <RoomCard key={room['ห้องที่']} room={room} />)}
-                        </div>
+                        {studentRooms.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+                                {studentRooms.map((room, i) => <RoomCard key={i} room={room} />)}
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-400 mb-12 italic pl-4">ไม่มีรายการห้องพักนักเรียน</p>
+                        )}
+
+                        {otherRooms.length > 0 && (
+                            <>
+                                <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-l-4 border-purple-500 pl-3">ห้องพักอื่นๆ</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    {otherRooms.map((room, i) => <RoomCard key={i} room={room} />)}
+                                </div>
+                            </>
+                        )}
                     </div>
                 );
             };
 
-            // --- Registration Logic ---
             const handleSelectRoom = (room) => {
                 setSelectedRoom(room);
                 setView('register');
             };
 
+            // Render ฟอร์มลงทะเบียน
             const RegistrationForm = () => {
-                const occupants = registrations.filter(reg => reg['ห้องที่'] === selectedRoom['ห้องที่']);
-                const availableSlots = selectedRoom['จำนวนคน/ห้อง'] - occupants.length;
+                const roomNo = getVal(selectedRoom, ['ห้องที่', 'room_no', 'id']);
+                const roomName = getVal(selectedRoom, ['ชื่อห้อง', 'ชื่อห้องพัก', 'room_name']);
+                const roomTarget = getVal(selectedRoom, ['สำหรับ', 'Target', 'target']);
+                const roomGender = getVal(selectedRoom, ['เพศ', 'gender']);
+                const capacity = Number(getVal(selectedRoom, ['จำนวนคน/ห้อง', 'จำนวนคน', 'capacity'], 1));
+
+                const occupants = registrations.filter(reg => String(getVal(reg, ['ห้องที่', 'room_no'])) === String(roomNo));
+                const availableSlots = Math.max(0, capacity - occupants.length);
                 
-                // State for the current filling slots
                 const [forms, setForms] = useState(Array.from({length: availableSlots}, () => ({
                     รหัสนักเรียน: '', เลขที่: '', 'ชื่อ - สกุล': '', ระดับชั้น: '', ตำแหน่ง: '',
                     ศาสนา: 'พุทธ', โรคประจำตัว: '', การแพ้อาหาร: '', ยาที่แพ้: '', isVerified: false
@@ -210,25 +281,22 @@
                 const [isSubmitting, setIsSubmitting] = useState(false);
 
                 const verifyStudent = async (index, studentId) => {
-                    if (!studentId) return;
+                    if (!studentId || !studentId.trim()) return;
+                    const cleanId = studentId.trim();
                     
-                    // Check if already in current state (to prevent duplicates in same submission)
-                    const duplicatesInForm = forms.filter((f, i) => i !== index && f.รหัสนักเรียน === studentId);
+                    const duplicatesInForm = forms.filter((f, i) => i !== index && f.รหัสนักเรียน === cleanId);
                     if (duplicatesInForm.length > 0) {
                         showAlert('รหัสนี้ถูกกรอกในฟอร์มนี้แล้ว');
                         return;
                     }
 
-                    // Check if already registered in database
-                    if (registrations.some(r => r['รหัสนักเรียน'] === studentId)) {
+                    if (registrations.some(r => String(getVal(r, ['รหัสนักเรียน', 'student_id'])).trim() === cleanId)) {
                         showAlert('รหัสนี้ได้ทำการลงทะเบียนห้องพักไปแล้ว');
                         return;
                     }
 
                     try {
-                        const colName = encodeURIComponent('รหัสนักเรียน');
-                        const colVal = encodeURIComponent(studentId);
-                        const res = await fetch(`${SUPABASE_URL}/data?${colName}=eq.${colVal}`, { headers });
+                        const res = await fetch(`${SUPABASE_URL}/data?รหัสนักเรียน=eq.${cleanId}`, { headers });
                         
                         if (!res.ok) {
                             const errText = await res.text();
@@ -240,37 +308,37 @@
 
                         if (data && data.length > 0) {
                             const studentData = data[0];
+                            const studentGender = getVal(studentData, ['เพศ', 'gender']);
+                            const studentPos = getVal(studentData, ['ตำแหน่ง', 'position']);
                             
-                            // Validate conditions
-                            if (studentData['เพศ'] !== selectedRoom['เพศ']) {
-                                showAlert(`ไม่สามารถลงทะเบียนได้: ห้องนี้สำหรับเพศ ${selectedRoom['เพศ']}`);
+                            if (roomGender && studentGender && studentGender !== roomGender) {
+                                showAlert(`ไม่สามารถลงทะเบียนได้: ห้องนี้สำหรับเพศ ${roomGender} (ข้อมูลผู้สมัครเป็นเพศ ${studentGender})`);
                                 return;
                             }
-                            if (studentData['ตำแหน่ง'] !== selectedRoom['สำหรับ']) {
-                                showAlert(`ไม่สามารถลงทะเบียนได้: ห้องนี้สำหรับ ${selectedRoom['สำหรับ']}`);
+                            if (roomTarget && studentPos && !String(roomTarget).includes(studentPos)) {
+                                showAlert(`ไม่สามารถลงทะเบียนได้: ห้องนี้สำหรับ ${roomTarget} (ตำแหน่งของคุณคือ ${studentPos})`);
                                 return;
                             }
 
-                            // Update form state
                             const newForms = [...forms];
                             newForms[index] = {
                                 ...newForms[index],
-                                เลขที่: studentData['เลขที่'] || '-',
-                                'ชื่อ - สกุล': studentData['ชื่อ - สกุล'],
-                                ระดับชั้น: studentData['ระดับชั้น'] || '-',
-                                ตำแหน่ง: studentData['ตำแหน่ง'],
+                                รหัสนักเรียน: cleanId,
+                                เลขที่: getVal(studentData, ['เลขที่', 'no'], '-'),
+                                'ชื่อ - สกุล': getVal(studentData, ['ชื่อ - สกุล', 'ชื่อ-สกุล', 'fullname', 'name']),
+                                ระดับชั้น: getVal(studentData, ['ระดับชั้น', 'class', 'grade'], '-'),
+                                ตำแหน่ง: studentPos || '-',
                                 isVerified: true
                             };
                             setForms(newForms);
                         } else {
-                            showAlert('ไม่พบข้อมูลรหัสนี้ในระบบ');
+                            showAlert('ไม่พบข้อมูลรหัสนี้ในแผ่นงาน "data"');
                             const newForms = [...forms];
                             newForms[index].isVerified = false;
                             newForms[index]['ชื่อ - สกุล'] = '';
                             setForms(newForms);
                         }
                     } catch (err) {
-                        console.error('Verify error:', err);
                         showAlert('เกิดข้อผิดพลาดในการตรวจสอบข้อมูล');
                     }
                 };
@@ -285,9 +353,9 @@
                     setIsSubmitting(true);
                     
                     const payloads = validForms.map(form => ({
-                        'ห้องที่': selectedRoom['ห้องที่'],
-                        'ชื่อห้องพัก': selectedRoom['ชื่อห้อง'],
-                        'เพศ': selectedRoom['เพศ'],
+                        'ห้องที่': roomNo,
+                        'ชื่อห้องพัก': roomName,
+                        'เพศ': roomGender,
                         'รหัสนักเรียน': form['รหัสนักเรียน'],
                         'ชื่อ - สกุล': form['ชื่อ - สกุล'],
                         'ระดับชั้น': form['ระดับชั้น'],
@@ -314,7 +382,6 @@
                             showAlert(`เกิดข้อผิดพลาดในการบันทึกข้อมูล (${res.status}): ${errText}`);
                         }
                     } catch (err) {
-                        console.error('Submit error:', err);
                         showAlert('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
                     }
                     setIsSubmitting(false);
@@ -327,11 +394,11 @@
                         </button>
                         
                         <div className="glass-panel p-6 rounded-2xl border border-blue-100 mb-8">
-                            <h2 className="text-2xl font-bold text-blue-900 mb-2">ลงทะเบียน: ห้องที่ {selectedRoom['ห้องที่']}</h2>
-                            <div className="flex flex-wrap gap-4 text-sm text-gray-700">
-                                <span className="bg-white px-3 py-1 rounded-md border">ชื่อห้อง: {selectedRoom['ชื่อห้อง']}</span>
-                                <span className="bg-white px-3 py-1 rounded-md border">สำหรับ: {selectedRoom['สำหรับ']}</span>
-                                <span className="bg-white px-3 py-1 rounded-md border">เพศ: {selectedRoom['เพศ']}</span>
+                            <h2 className="text-2xl font-bold text-blue-900 mb-2">ลงทะเบียน: ห้องที่ {roomNo}</h2>
+                            <div className="flex flex-wrap gap-3 text-sm text-gray-700">
+                                <span className="bg-white px-3 py-1 rounded-md border">ชื่อห้อง: {roomName}</span>
+                                <span className="bg-white px-3 py-1 rounded-md border">สำหรับ: {roomTarget || 'ทั่วไป'}</span>
+                                <span className="bg-white px-3 py-1 rounded-md border">เพศ: {roomGender || 'ไม่ระบุ'}</span>
                                 <span className="bg-white px-3 py-1 rounded-md border text-blue-600 font-semibold">ที่ว่าง: {availableSlots} ที่</span>
                             </div>
                         </div>
@@ -342,11 +409,10 @@
                                 <h3 className="text-lg font-semibold text-gray-800 mb-4 pl-2">คนที่ {index + 1}</h3>
                                 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {/* Row 1 */}
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">1. รหัสนักเรียน/รหัสครู</label>
                                         <input type="text" 
-                                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-transparent outline-none"
+                                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
                                             value={form['รหัสนักเรียน']}
                                             onChange={e => {
                                                 const newForms = [...forms];
@@ -355,34 +421,33 @@
                                                 setForms(newForms);
                                             }}
                                             onBlur={(e) => verifyStudent(index, e.target.value)}
-                                            placeholder="พิมพ์และคลิกที่อื่นเพื่อตรวจสอบ..."
+                                            placeholder="พิมพ์รหัส แล้วกดคลิกที่อื่นเพื่อดึงข้อมูล..."
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">2. ชื่อ - สกุล (อัตโนมัติ)</label>
-                                        <input type="text" disabled className="w-full p-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['ชื่อ - สกุล']} placeholder="ดึงข้อมูลอัตโนมัติ" />
+                                        <input type="text" disabled className="w-full p-2.5 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['ชื่อ - สกุล']} placeholder="ดึงข้อมูลอัตโนมัติ" />
                                     </div>
 
-                                    {/* Row 2 */}
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">3. เลขที่</label>
-                                            <input type="text" disabled className="w-full p-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['เลขที่']} />
+                                            <input type="text" disabled className="w-full p-2.5 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['เลขที่']} />
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">4. ระดับชั้น</label>
-                                            <input type="text" disabled className="w-full p-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['ระดับชั้น']} />
+                                            <input type="text" disabled className="w-full p-2.5 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['ระดับชั้น']} />
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">5. ตำแหน่ง</label>
-                                            <input type="text" disabled className="w-full p-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['ตำแหน่ง']} />
+                                            <input type="text" disabled className="w-full p-2.5 bg-gray-100 border border-gray-300 rounded-lg text-gray-600" value={form['ตำแหน่ง']} />
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">6. ศาสนา</label>
                                             <select 
-                                                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none bg-white"
+                                                className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none bg-white"
                                                 value={form['ศาสนา']}
                                                 onChange={e => {
                                                     const newForms = [...forms];
@@ -400,42 +465,41 @@
                                         </div>
                                     </div>
 
-                                    {/* Row 3 - Health */}
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">7. โรคประจำตัว (ถ้ามี)</label>
                                         <input type="text" disabled={!form.isVerified}
-                                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
+                                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
                                             value={form['โรคประจำตัว']}
                                             onChange={e => {
                                                 const newForms = [...forms];
                                                 newForms[index]['โรคประจำตัว'] = e.target.value;
                                                 setForms(newForms);
                                             }}
-                                            placeholder="ไม่มีขีด -" />
+                                            placeholder="หากไม่มี ใส่ -" />
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">8. การแพ้อาหาร (ถ้ามี)</label>
                                         <input type="text" disabled={!form.isVerified}
-                                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
+                                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
                                             value={form['การแพ้อาหาร']}
                                             onChange={e => {
                                                 const newForms = [...forms];
                                                 newForms[index]['การแพ้อาหาร'] = e.target.value;
                                                 setForms(newForms);
                                             }}
-                                            placeholder="ไม่มีขีด -" />
+                                            placeholder="หากไม่มี ใส่ -" />
                                     </div>
                                     <div className="md:col-span-2">
                                         <label className="block text-sm font-medium text-gray-700 mb-1">9. ยาที่แพ้ (ถ้ามี)</label>
                                         <input type="text" disabled={!form.isVerified}
-                                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
+                                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
                                             value={form['ยาที่แพ้']}
                                             onChange={e => {
                                                 const newForms = [...forms];
                                                 newForms[index]['ยาที่แพ้'] = e.target.value;
                                                 setForms(newForms);
                                             }}
-                                            placeholder="ไม่มีขีด -" />
+                                            placeholder="หากไม่มี ใส่ -" />
                                     </div>
                                 </div>
                             </div>
@@ -457,7 +521,7 @@
                 );
             };
 
-            // --- Delete Logic ---
+            // ลบการลงทะเบียน
             const confirmDelete = (personData) => {
                 setDeleteData(personData);
                 setIdCardInput('');
@@ -471,11 +535,9 @@
 
                 setLoading(true);
                 try {
-                    const colName = encodeURIComponent('รหัสนักเรียน');
-                    const colVal = encodeURIComponent(deleteData['รหัสนักเรียน']);
+                    const studentId = getVal(deleteData, ['รหัสนักเรียน', 'student_id']);
                     
-                    // 1. Verify ID Card from 'data' table matching the student ID
-                    const resVerify = await fetch(`${SUPABASE_URL}/data?${colName}=eq.${colVal}`, { headers });
+                    const resVerify = await fetch(`${SUPABASE_URL}/data?รหัสนักเรียน=eq.${studentId}`, { headers });
                     
                     if (!resVerify.ok) {
                         const errText = await resVerify.text();
@@ -486,26 +548,30 @@
 
                     const verifyData = await resVerify.json();
 
-                    if (verifyData && verifyData.length > 0 && String(verifyData[0]['เลขบัตประจำตัว']).trim() === idCardInput.trim()) {
-                        // 2. IDs match, proceed to delete from 'regis' table
-                        const resDelete = await fetch(`${SUPABASE_URL}/regis?${colName}=eq.${colVal}`, {
-                            method: 'DELETE',
-                            headers
-                        });
+                    if (verifyData && verifyData.length > 0) {
+                        const dbIdCard = String(getVal(verifyData[0], ['เลขบัตประจำตัว', 'เลขบัตรประจำตัว', 'id_card', 'citizen_id'])).trim();
+                        
+                        if (dbIdCard === idCardInput.trim()) {
+                            const resDelete = await fetch(`${SUPABASE_URL}/regis?รหัสนักเรียน=eq.${studentId}`, {
+                                method: 'DELETE',
+                                headers
+                            });
 
-                        if (resDelete.ok) {
-                            showAlert('ลบข้อมูลสำเร็จ');
-                            setDeleteData(null);
-                            await fetchInitialData();
+                            if (resDelete.ok) {
+                                showAlert('ลบข้อมูลการลงทะเบียนเรียบร้อยแล้ว');
+                                setDeleteData(null);
+                                await fetchInitialData();
+                            } else {
+                                const errText = await resDelete.text();
+                                showAlert(`เกิดข้อผิดพลาดในการลบข้อมูล (${resDelete.status}): ${errText}`);
+                            }
                         } else {
-                            const errText = await resDelete.text();
-                            showAlert(`เกิดข้อผิดพลาดในการลบข้อมูล (${resDelete.status}): ${errText}`);
+                            showAlert('เลขบัตรประจำตัวประชาชนไม่ถูกต้อง');
                         }
                     } else {
-                        showAlert('เลขบัตรประจำตัวไม่ถูกต้อง');
+                        showAlert('ไม่พบข้อมูลรหัสนี้ในแผ่นงาน "data"');
                     }
                 } catch (err) {
-                    console.error('Delete error:', err);
                     showAlert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
                 }
                 setLoading(false);
@@ -525,8 +591,9 @@
                     {/* Main Content */}
                     <main className="flex-grow">
                         {loading && view === 'home' ? (
-                            <div className="flex justify-center items-center h-40">
-                                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                            <div className="flex flex-col justify-center items-center h-48 gap-3">
+                                <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+                                <p className="text-gray-500 text-sm">กำลังโหลดข้อมูลห้องพัก...</p>
                             </div>
                         ) : (
                             view === 'home' ? renderHome() : <RegistrationForm />
@@ -543,10 +610,10 @@
                         </p>
                     </footer>
 
-                    {/* Simple Alert Modal */}
+                    {/* Alert Modal */}
                     {modalMsg && (
                         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-                            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl transform transition-all">
+                            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
                                 <h3 className="text-lg font-bold text-gray-900 mb-2">แจ้งเตือน</h3>
                                 <p className="text-gray-600 mb-6 whitespace-pre-line">{modalMsg}</p>
                                 <div className="flex justify-end">
@@ -556,13 +623,13 @@
                         </div>
                     )}
 
-                    {/* Delete Confirmation Modal */}
+                    {/* Delete Confirm Modal */}
                     {deleteData && (
                         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-                            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl transform transition-all">
+                            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
                                 <h3 className="text-xl font-bold text-red-600 mb-2">ยืนยันการยกเลิกห้องพัก</h3>
                                 <p className="text-gray-600 mb-4">
-                                    ท่านต้องการลบข้อมูลของ <b>{deleteData['ชื่อ - สกุล']}</b> ออกจาก <b>{deleteData['ชื่อห้องพัก']}</b> หรือไม่?
+                                    ท่านต้องการลบข้อมูลของ <b>{getVal(deleteData, ['ชื่อ - สกุล', 'ชื่อ-สกุล', 'fullname'])}</b> ออกจาก <b>{getVal(deleteData, ['ชื่อห้องพัก', 'room_name'])}</b> หรือไม่?
                                 </p>
                                 <div className="mb-6">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">เพื่อยืนยัน กรุณากรอกเลขบัตรประจำตัวประชาชน</label>
@@ -571,7 +638,7 @@
                                         className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-red-400 outline-none"
                                         value={idCardInput}
                                         onChange={(e) => setIdCardInput(e.target.value)}
-                                        placeholder="เลขบัตรประจำตัว..."
+                                        placeholder="เลขบัตรประจำตัวประชาชน..."
                                     />
                                 </div>
                                 <div className="flex justify-end gap-3">
