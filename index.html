@@ -142,7 +142,6 @@
 
             // Helper ดึงข้อมูลคนในตาราง data โดยค้นหาแบบยืดหยุ่น
             const findStudentData = async (cleanId) => {
-                // ค้นหาโดยลองใช้ Query string ที่สร้างจาก URLSearchParams
                 const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'];
                 
                 for (let key of searchKeys) {
@@ -161,7 +160,7 @@
                     }
                 }
 
-                // หากค้นแบบเจาะจงไม่เจอ ให้ลองดึงข้อมูลแบบ Select All แล้วค้นในหน่วยความจำ (Fallback)
+                // Fallback: ดึงรายการทั้งหมดแล้วค้นหาใน Memory
                 try {
                     const resAll = await fetch(`${SUPABASE_URL}/data?select=*`, { headers });
                     if (resAll.ok) {
@@ -373,26 +372,29 @@
                     }
 
                     setIsSubmitting(true);
+                    const form = validForms[0];
                     
-                    const payloads = validForms.map(form => ({
+                    // เตรียม Payload รวมฟิลด์ 'เลขที่' ให้ตรงตามข้อกำหนด
+                    const payload = {
                         'ห้องที่': roomNo,
                         'ชื่อห้องพัก': roomName,
                         'เพศ': roomGender,
                         'รหัสนักเรียน': form['รหัสนักเรียน'],
+                        'เลขที่': form['เลขที่'] || '-',
                         'ชื่อ - สกุล': form['ชื่อ - สกุล'],
-                        'ระดับชั้น': form['ระดับชั้น'],
-                        'ตำแหน่ง': form['ตำแหน่ง'],
-                        'ศาสนา': form['ศาสนา'],
+                        'ระดับชั้น': form['ระดับชั้น'] || '-',
+                        'ตำแหน่ง': form['ตำแหน่ง'] || '-',
+                        'ศาสนา': form['ศาสนา'] || 'พุทธ',
                         'โรคประจำตัว': form['โรคประจำตัว'] || '-',
                         'การแพ้อาหาร': form['การแพ้อาหาร'] || '-',
                         'ยาที่แพ้': form['ยาที่แพ้'] || '-'
-                    }));
+                    };
 
                     try {
                         const res = await fetch(`${SUPABASE_URL}/regis`, {
                             method: 'POST',
                             headers,
-                            body: JSON.stringify(payloads)
+                            body: JSON.stringify(payload)
                         });
 
                         if (res.ok) {
@@ -401,10 +403,15 @@
                             setView('home');
                         } else {
                             const errText = await res.text();
-                            showAlert(`เกิดข้อผิดพลาดในการบันทึกข้อมูล (${res.status}): ${errText}`);
+                            let errDetail = errText;
+                            try {
+                                const parsed = JSON.parse(errText);
+                                errDetail = parsed.message || parsed.details || parsed.hint || errText;
+                            } catch(e) {}
+                            showAlert(`เกิดข้อผิดพลาดในการบันทึกข้อมูล (${res.status}): ${errDetail}`);
                         }
                     } catch (err) {
-                        showAlert('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
+                        showAlert(`ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้: ${err.message}`);
                     }
                     setIsSubmitting(false);
                 };
@@ -567,21 +574,32 @@
                         
                         if (dbIdCard === idCardInput.trim()) {
                             // ลบจากตาราง regis
-                            const params = new URLSearchParams();
-                            params.append('รหัสนักเรียน', `eq.${studentId}`);
-                            
-                            let resDelete = await fetch(`${SUPABASE_URL}/regis?${params.toString()}`, {
-                                method: 'DELETE',
-                                headers
-                            });
+                            const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id'];
+                            let deleted = false;
 
-                            if (resDelete.ok) {
+                            for (let key of searchKeys) {
+                                try {
+                                    const params = new URLSearchParams();
+                                    params.append(key, `eq.${studentId}`);
+                                    
+                                    let resDelete = await fetch(`${SUPABASE_URL}/regis?${params.toString()}`, {
+                                        method: 'DELETE',
+                                        headers
+                                    });
+
+                                    if (resDelete.ok) {
+                                        deleted = true;
+                                        break;
+                                    }
+                                } catch(e) {}
+                            }
+
+                            if (deleted) {
                                 showAlert('ลบข้อมูลการลงทะเบียนเรียบร้อยแล้ว');
                                 setDeleteData(null);
                                 await fetchInitialData();
                             } else {
-                                const errText = await resDelete.text();
-                                showAlert(`เกิดข้อผิดพลาดในการลบข้อมูล (${resDelete.status}): ${errText}`);
+                                showAlert(`เกิดข้อผิดพลาดในการลบข้อมูลที่ฐานข้อมูล Supabase`);
                             }
                         } else {
                             showAlert('เลขบัตรประจำตัวประชาชนไม่ถูกต้อง');
