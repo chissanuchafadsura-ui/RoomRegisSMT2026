@@ -140,9 +140,8 @@
             const showAlert = (msg) => { setModalMsg(msg); };
             const closeAlert = () => { setModalMsg(''); };
 
-            // Helper ดึงข้อมูลคนในตาราง data โดยค้นหาอย่างครอบคลุม
-            const findStudentData = async (cleanId) => {
-                // 1. ลองดึงข้อมูลจาก 'data' ทั้งหมด เพื่อนำมาแมตช์หาอย่างแม่นยำที่สุด (แก้ปัญหา Filter ชื่อคอลัมน์ภาษาไทยไม่ติด)
+            // Helper ดึงข้อมูลคนในตาราง data โดยค้นหาอย่างยืดหยุ่นทั้งจากรหัสนักเรียน และชื่อ-สกุล
+            const findStudentData = async (cleanId, cleanName = '') => {
                 try {
                     const resAll = await fetch(`${SUPABASE_URL}/data?select=*`, { headers });
                     if (resAll.ok) {
@@ -150,31 +149,20 @@
                         if (Array.isArray(allData) && allData.length > 0) {
                             const match = allData.find(item => {
                                 const idVal = String(getVal(item, ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'], '')).trim();
-                                return idVal === String(cleanId).trim();
+                                const nameVal = String(getVal(item, ['ชื่อ - สกุล', 'ชื่อ-สกุล', 'fullname', 'name'], '')).trim();
+                                
+                                // เทียบจากรหัสนักเรียน
+                                if (cleanId && idVal && idVal === String(cleanId).trim()) return true;
+                                // เทียบจากชื่อ - สกุล (ตัดช่องว่างออกป้องกันการสะกดต่างกัน)
+                                if (cleanName && nameVal && nameVal.replace(/\s+/g, '') === String(cleanName).trim().replace(/\s+/g, '')) return true;
+                                
+                                return false;
                             });
                             if (match) return { success: true, data: match };
                         }
                     }
                 } catch (e) {
                     console.error('Fetch all data error:', e);
-                }
-
-                // 2. Fallback: กรณีข้อมูลเยอะ สามารถลองใช้ Filter URLSearchParams
-                const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'];
-                for (let key of searchKeys) {
-                    try {
-                        const params = new URLSearchParams();
-                        params.append(key, `eq.${cleanId}`);
-                        const res = await fetch(`${SUPABASE_URL}/data?${params.toString()}`, { headers });
-                        if (res.ok) {
-                            const data = await res.json();
-                            if (data && data.length > 0) {
-                                return { success: true, data: data[0] };
-                            }
-                        }
-                    } catch (e) {
-                        console.error(e);
-                    }
                 }
 
                 return { success: false };
@@ -602,34 +590,46 @@
 
                 setLoading(true);
                 try {
-                    const studentId = String(getVal(deleteData, ['รหัสนักเรียน', 'รหัส', 'student_id'])).trim();
-                    
-                    const result = await findStudentData(studentId);
+                    const studentId = String(getVal(deleteData, ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'], '')).trim();
+                    const studentName = String(getVal(deleteData, ['ชื่อ - สกุล', 'ชื่อ-สกุล', 'fullname', 'name'], '')).trim();
+
+                    // ค้นหาแถวของผู้ลงทะเบียนในตาราง data
+                    const result = await findStudentData(studentId, studentName);
 
                     if (result.success) {
                         const studentData = result.data;
-                        // ดึงเลขบัตรประจำตัวโดยลองหาคอลัมน์ "เลขบัตรประจำตัว", "เลขบัตประจำตัว", ฯลฯ
-                        const dbIdCard = String(getVal(studentData, ['เลขบัตรประจำตัว', 'เลขบัตประจำตัว', 'id_card', 'citizen_id', 'เลขบัตรประชาชน'])).trim();
                         
-                        if (dbIdCard && dbIdCard === idCardInput.trim()) {
-                            // ดำเนินการลบจากตาราง regis
-                            const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id'];
+                        // ดึงเลขบัตรประจำตัว และลบขีด/ช่องว่างออกเพื่อเปรียบเทียบ
+                        const rawDbCard = String(getVal(studentData, ['เลขบัตรประจำตัว', 'เลขบัตประจำตัว', 'id_card', 'citizen_id', 'เลขบัตรประชาชน'], '')).trim();
+                        const dbIdCard = rawDbCard.replace(/[\s-]/g, '');
+                        const inputIdCard = idCardInput.trim().replace(/[\s-]/g, '');
+
+                        if (dbIdCard && dbIdCard === inputIdCard) {
                             let deleted = false;
 
-                            for (let key of searchKeys) {
+                            // 1. ลองลบโดยอ้างอิงจาก 'รหัสนักเรียน'
+                            if (studentId) {
                                 try {
                                     const params = new URLSearchParams();
-                                    params.append(key, `eq.${studentId}`);
-                                    
+                                    params.append('รหัสนักเรียน', `eq.${studentId}`);
                                     let resDelete = await fetch(`${SUPABASE_URL}/regis?${params.toString()}`, {
                                         method: 'DELETE',
                                         headers
                                     });
+                                    if (resDelete.ok) deleted = true;
+                                } catch(e) {}
+                            }
 
-                                    if (resDelete.ok) {
-                                        deleted = true;
-                                        break;
-                                    }
+                            // 2. ถ้าลบด้วยรหัสยังไม่ได้ ให้ลองลบด้วย 'ชื่อ - สกุล'
+                            if (!deleted && studentName) {
+                                try {
+                                    const params = new URLSearchParams();
+                                    params.append('ชื่อ - สกุล', `eq.${studentName}`);
+                                    let resDelete = await fetch(`${SUPABASE_URL}/regis?${params.toString()}`, {
+                                        method: 'DELETE',
+                                        headers
+                                    });
+                                    if (resDelete.ok) deleted = true;
                                 } catch(e) {}
                             }
 
@@ -638,15 +638,16 @@
                                 setDeleteData(null);
                                 await fetchInitialData();
                             } else {
-                                showAlert(`เกิดข้อผิดพลาดในการลบข้อมูลที่ฐานข้อมูล Supabase`);
+                                showAlert('เกิดข้อผิดพลาดในการลบข้อมูลที่ฐานข้อมูล Supabase');
                             }
                         } else {
                             showAlert('เลขบัตรประจำตัวประชาชนไม่ถูกต้อง');
                         }
                     } else {
-                        showAlert('ไม่พบข้อมูลรหัสนี้ในแผ่นงาน "data"');
+                        showAlert('ไม่พบข้อมูลของผู้ลงทะเบียนนี้ในแผ่นงาน "data"');
                     }
                 } catch (err) {
+                    console.error(err);
                     showAlert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
                 }
                 setLoading(false);
