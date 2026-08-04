@@ -274,28 +274,25 @@
                 const occupants = registrations.filter(reg => String(getVal(reg, ['ห้องที่', 'room_no'])) === String(roomNo));
                 const availableSlots = Math.max(0, capacity - occupants.length);
                 
-                const [forms, setForms] = useState(Array.from({length: availableSlots}, () => ({
+                // แก้ไขให้แสดงแค่ 1 ฟอร์ม (1 คนต่อการลงทะเบียน 1 ครั้ง) เท่านั้น
+                const [forms, setForms] = useState([{
                     รหัสนักเรียน: '', เลขที่: '', 'ชื่อ - สกุล': '', ระดับชั้น: '', ตำแหน่ง: '',
                     ศาสนา: 'พุทธ', โรคประจำตัว: '', การแพ้อาหาร: '', ยาที่แพ้: '', isVerified: false
-                })));
+                }]);
+                
                 const [isSubmitting, setIsSubmitting] = useState(false);
 
                 const verifyStudent = async (index, studentId) => {
                     if (!studentId || !studentId.trim()) return;
                     const cleanId = studentId.trim();
                     
-                    const duplicatesInForm = forms.filter((f, i) => i !== index && f.รหัสนักเรียน === cleanId);
-                    if (duplicatesInForm.length > 0) {
-                        showAlert('รหัสนี้ถูกกรอกในฟอร์มนี้แล้ว');
-                        return;
-                    }
-
                     if (registrations.some(r => String(getVal(r, ['รหัสนักเรียน', 'student_id'])).trim() === cleanId)) {
                         showAlert('รหัสนี้ได้ทำการลงทะเบียนห้องพักไปแล้ว');
                         return;
                     }
 
                     try {
+                        // ส่งชื่อคอลัมน์ตรงๆ โดยไม่ใช้ encodeURIComponent ตามที่ตั้งค่าไว้
                         const res = await fetch(`${SUPABASE_URL}/data?รหัสนักเรียน=eq.${cleanId}`, { headers });
                         
                         if (!res.ok) {
@@ -346,7 +343,7 @@
                 const handleSubmit = async () => {
                     const validForms = forms.filter(f => f.isVerified);
                     if (validForms.length === 0) {
-                        showAlert('กรุณากรอกและตรวจสอบรหัสนักเรียนให้ถูกต้องอย่างน้อย 1 คน');
+                        showAlert('กรุณากรอกและตรวจสอบรหัสนักเรียนให้ถูกต้อง');
                         return;
                     }
 
@@ -403,10 +400,11 @@
                             </div>
                         </div>
 
+                        {/* แสดงฟอร์มเพียง 1 ฟอร์มต่อ 1 การลงทะเบียน */}
                         {forms.map((form, index) => (
                             <div key={index} className="glass-panel p-6 rounded-2xl border border-gray-200 mb-6 shadow-sm relative overflow-hidden">
                                 <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
-                                <h3 className="text-lg font-semibold text-gray-800 mb-4 pl-2">คนที่ {index + 1}</h3>
+                                <h3 className="text-lg font-semibold text-gray-800 mb-4 pl-2">ข้อมูลผู้ลงทะเบียน</h3>
                                 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
