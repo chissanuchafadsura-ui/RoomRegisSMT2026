@@ -140,10 +140,27 @@
             const showAlert = (msg) => { setModalMsg(msg); };
             const closeAlert = () => { setModalMsg(''); };
 
-            // Helper ดึงข้อมูลคนในตาราง data โดยค้นหาแบบยืดหยุ่น
+            // Helper ดึงข้อมูลคนในตาราง data โดยค้นหาอย่างครอบคลุม
             const findStudentData = async (cleanId) => {
+                // 1. ลองดึงข้อมูลจาก 'data' ทั้งหมด เพื่อนำมาแมตช์หาอย่างแม่นยำที่สุด (แก้ปัญหา Filter ชื่อคอลัมน์ภาษาไทยไม่ติด)
+                try {
+                    const resAll = await fetch(`${SUPABASE_URL}/data?select=*`, { headers });
+                    if (resAll.ok) {
+                        const allData = await resAll.json();
+                        if (Array.isArray(allData) && allData.length > 0) {
+                            const match = allData.find(item => {
+                                const idVal = String(getVal(item, ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'], '')).trim();
+                                return idVal === String(cleanId).trim();
+                            });
+                            if (match) return { success: true, data: match };
+                        }
+                    }
+                } catch (e) {
+                    console.error('Fetch all data error:', e);
+                }
+
+                // 2. Fallback: กรณีข้อมูลเยอะ สามารถลองใช้ Filter URLSearchParams
                 const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'];
-                
                 for (let key of searchKeys) {
                     try {
                         const params = new URLSearchParams();
@@ -158,21 +175,6 @@
                     } catch (e) {
                         console.error(e);
                     }
-                }
-
-                // Fallback: ดึงรายการทั้งหมดแล้วค้นหาใน Memory
-                try {
-                    const resAll = await fetch(`${SUPABASE_URL}/data?select=*`, { headers });
-                    if (resAll.ok) {
-                        const allData = await resAll.json();
-                        const match = allData.find(item => {
-                            const val = String(getVal(item, ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'])).trim();
-                            return val === cleanId;
-                        });
-                        if (match) return { success: true, data: match };
-                    }
-                } catch (e) {
-                    console.error(e);
                 }
 
                 return { success: false };
@@ -402,16 +404,13 @@
 
                         let errText = await res.text();
 
-                        // หากเจอ PGRST204 (ไม่พบคอลัมน์ที่ระบุใน Schema Cache)
                         if (res.status === 400 && errText.includes('PGRST204')) {
                             let retryPayload = { ...currentPayload };
 
-                            // กรณีคอลัมน์ 'ชื่อห้องพัก' ไม่พบ ให้ลองเปลี่ยนเป็น 'ชื่อห้อง'
                             if (errText.includes("'ชื่อห้องพัก'") || errText.includes('ชื่อห้องพัก')) {
                                 delete retryPayload['ชื่อห้องพัก'];
                                 retryPayload['ชื่อห้อง'] = roomName;
                             } 
-                            // กรณีชื่อคอลัมน์อื่นๆ ไม่ตรง ให้ดึงชื่อคอลัมน์จากข้อความแจ้งเตือนแล้วลบออก
                             else {
                                 const match = errText.match(/Could not find the '([^']+)' column/);
                                 if (match && match[1]) {
@@ -419,7 +418,6 @@
                                 }
                             }
 
-                            // พยายามบันทึกรอบใหม่
                             let resRetry = await fetch(`${SUPABASE_URL}/regis`, {
                                 method: 'POST',
                                 headers,
@@ -604,16 +602,17 @@
 
                 setLoading(true);
                 try {
-                    const studentId = getVal(deleteData, ['รหัสนักเรียน', 'รหัส', 'student_id']);
+                    const studentId = String(getVal(deleteData, ['รหัสนักเรียน', 'รหัส', 'student_id'])).trim();
                     
                     const result = await findStudentData(studentId);
 
                     if (result.success) {
                         const studentData = result.data;
-                        const dbIdCard = String(getVal(studentData, ['เลขบัตประจำตัว', 'เลขบัตรประจำตัว', 'id_card', 'citizen_id'])).trim();
+                        // ดึงเลขบัตรประจำตัวโดยลองหาคอลัมน์ "เลขบัตรประจำตัว", "เลขบัตประจำตัว", ฯลฯ
+                        const dbIdCard = String(getVal(studentData, ['เลขบัตรประจำตัว', 'เลขบัตประจำตัว', 'id_card', 'citizen_id', 'เลขบัตรประชาชน'])).trim();
                         
-                        if (dbIdCard === idCardInput.trim()) {
-                            // ลบจากตาราง regis
+                        if (dbIdCard && dbIdCard === idCardInput.trim()) {
+                            // ดำเนินการลบจากตาราง regis
                             const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id'];
                             let deleted = false;
 
