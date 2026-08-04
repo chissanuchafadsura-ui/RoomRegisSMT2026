@@ -140,6 +140,45 @@
             const showAlert = (msg) => { setModalMsg(msg); };
             const closeAlert = () => { setModalMsg(''); };
 
+            // Helper ดึงข้อมูลคนในตาราง data โดยค้นหาแบบยืดหยุ่น
+            const findStudentData = async (cleanId) => {
+                // ค้นหาโดยลองใช้ Query string ที่สร้างจาก URLSearchParams
+                const searchKeys = ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'];
+                
+                for (let key of searchKeys) {
+                    try {
+                        const params = new URLSearchParams();
+                        params.append(key, `eq.${cleanId}`);
+                        const res = await fetch(`${SUPABASE_URL}/data?${params.toString()}`, { headers });
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data && data.length > 0) {
+                                return { success: true, data: data[0] };
+                            }
+                        }
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }
+
+                // หากค้นแบบเจาะจงไม่เจอ ให้ลองดึงข้อมูลแบบ Select All แล้วค้นในหน่วยความจำ (Fallback)
+                try {
+                    const resAll = await fetch(`${SUPABASE_URL}/data?select=*`, { headers });
+                    if (resAll.ok) {
+                        const allData = await resAll.json();
+                        const match = allData.find(item => {
+                            const val = String(getVal(item, ['รหัสนักเรียน', 'รหัส', 'student_id', 'id'])).trim();
+                            return val === cleanId;
+                        });
+                        if (match) return { success: true, data: match };
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+
+                return { success: false };
+            };
+
             // Render หน้าแรก
             const renderHome = () => {
                 const teacherRooms = rooms.filter(r => {
@@ -216,12 +255,6 @@
                                     ⚠️ ไม่พบข้อมูลห้องพักในระบบ
                                 </p>
                                 <p className="mb-3">{fetchNotice}</p>
-                                <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs text-gray-700 space-y-1 mb-3">
-                                    <p className="font-bold text-gray-800">วิธีแก้ไขใน Supabase Dashboard:</p>
-                                    <p>1. เปิดเมนู <b>Table Editor</b> -&gt; เลือกตาราง <b>room</b>, <b>data</b>, และ <b>regis</b></p>
-                                    <p>2. กดปุ่ม <b>+ Add RLS policy</b> ที่มุมขวาบน -&gt; เลือก <b>Create policy from scratch</b></p>
-                                    <p>3. ตั้งชื่อ Policy และเลือก <b>Allowed operations: ALL</b> แล้วใส่ค่า <b>USING / WITH CHECK = true</b> เพื่อเปิดสิทธิ์อ่าน/เขียน</p>
-                                </div>
                                 <button onClick={fetchInitialData} className="px-4 py-2 bg-amber-600 text-white font-medium rounded-xl text-xs hover:bg-amber-700 transition-colors shadow-sm">
                                     🔄 ลองดึงข้อมูลอีกครั้ง
                                 </button>
@@ -274,7 +307,7 @@
                 const occupants = registrations.filter(reg => String(getVal(reg, ['ห้องที่', 'room_no'])) === String(roomNo));
                 const availableSlots = Math.max(0, capacity - occupants.length);
                 
-                // แก้ไขให้แสดงแค่ 1 ฟอร์ม (1 คนต่อการลงทะเบียน 1 ครั้ง) เท่านั้น
+                // แสดง 1 ฟอร์มต่อ 1 การลงทะเบียน
                 const [forms, setForms] = useState([{
                     รหัสนักเรียน: '', เลขที่: '', 'ชื่อ - สกุล': '', ระดับชั้น: '', ตำแหน่ง: '',
                     ศาสนา: 'พุทธ', โรคประจำตัว: '', การแพ้อาหาร: '', ยาที่แพ้: '', isVerified: false
@@ -286,25 +319,16 @@
                     if (!studentId || !studentId.trim()) return;
                     const cleanId = studentId.trim();
                     
-                    if (registrations.some(r => String(getVal(r, ['รหัสนักเรียน', 'student_id'])).trim() === cleanId)) {
+                    if (registrations.some(r => String(getVal(r, ['รหัสนักเรียน', 'รหัส', 'student_id'])).trim() === cleanId)) {
                         showAlert('รหัสนี้ได้ทำการลงทะเบียนห้องพักไปแล้ว');
                         return;
                     }
 
                     try {
-                        // ส่งชื่อคอลัมน์ตรงๆ โดยไม่ใช้ encodeURIComponent ตามที่ตั้งค่าไว้
-                        const res = await fetch(`${SUPABASE_URL}/data?รหัสนักเรียน=eq.${cleanId}`, { headers });
-                        
-                        if (!res.ok) {
-                            const errText = await res.text();
-                            showAlert(`เกิดข้อผิดพลาดในการตรวจสอบข้อมูล (${res.status}): ${errText}`);
-                            return;
-                        }
+                        const result = await findStudentData(cleanId);
 
-                        const data = await res.json();
-
-                        if (data && data.length > 0) {
-                            const studentData = data[0];
+                        if (result.success) {
+                            const studentData = result.data;
                             const studentGender = getVal(studentData, ['เพศ', 'gender']);
                             const studentPos = getVal(studentData, ['ตำแหน่ง', 'position']);
                             
@@ -336,6 +360,7 @@
                             setForms(newForms);
                         }
                     } catch (err) {
+                        console.error(err);
                         showAlert('เกิดข้อผิดพลาดในการตรวจสอบข้อมูล');
                     }
                 };
@@ -400,7 +425,6 @@
                             </div>
                         </div>
 
-                        {/* แสดงฟอร์มเพียง 1 ฟอร์มต่อ 1 การลงทะเบียน */}
                         {forms.map((form, index) => (
                             <div key={index} className="glass-panel p-6 rounded-2xl border border-gray-200 mb-6 shadow-sm relative overflow-hidden">
                                 <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
@@ -533,24 +557,20 @@
 
                 setLoading(true);
                 try {
-                    const studentId = getVal(deleteData, ['รหัสนักเรียน', 'student_id']);
+                    const studentId = getVal(deleteData, ['รหัสนักเรียน', 'รหัส', 'student_id']);
                     
-                    const resVerify = await fetch(`${SUPABASE_URL}/data?รหัสนักเรียน=eq.${studentId}`, { headers });
-                    
-                    if (!resVerify.ok) {
-                        const errText = await resVerify.text();
-                        showAlert(`เกิดข้อผิดพลาดในการตรวจสอบ (${resVerify.status}): ${errText}`);
-                        setLoading(false);
-                        return;
-                    }
+                    const result = await findStudentData(studentId);
 
-                    const verifyData = await resVerify.json();
-
-                    if (verifyData && verifyData.length > 0) {
-                        const dbIdCard = String(getVal(verifyData[0], ['เลขบัตประจำตัว', 'เลขบัตรประจำตัว', 'id_card', 'citizen_id'])).trim();
+                    if (result.success) {
+                        const studentData = result.data;
+                        const dbIdCard = String(getVal(studentData, ['เลขบัตประจำตัว', 'เลขบัตรประจำตัว', 'id_card', 'citizen_id'])).trim();
                         
                         if (dbIdCard === idCardInput.trim()) {
-                            const resDelete = await fetch(`${SUPABASE_URL}/regis?รหัสนักเรียน=eq.${studentId}`, {
+                            // ลบจากตาราง regis
+                            const params = new URLSearchParams();
+                            params.append('รหัสนักเรียน', `eq.${studentId}`);
+                            
+                            let resDelete = await fetch(`${SUPABASE_URL}/regis?${params.toString()}`, {
                                 method: 'DELETE',
                                 headers
                             });
