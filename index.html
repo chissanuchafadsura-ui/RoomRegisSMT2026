@@ -374,8 +374,8 @@
                     setIsSubmitting(true);
                     const form = validForms[0];
                     
-                    // เตรียม Payload รวมฟิลด์ 'เลขที่' ให้ตรงตามข้อกำหนด
-                    const payload = {
+                    // เตรียม Payload หลัก
+                    let payload = {
                         'ห้องที่': roomNo,
                         'ชื่อห้องพัก': roomName,
                         'เพศ': roomGender,
@@ -390,25 +390,65 @@
                         'ยาที่แพ้': form['ยาที่แพ้'] || '-'
                     };
 
-                    try {
-                        const res = await fetch(`${SUPABASE_URL}/regis`, {
+                    // ฟังก์ชันบันทึกพร้อมระบบปรับชื่อคอลัมน์อัตโนมัติหากพบ PGRST204
+                    const saveToSupabase = async (currentPayload) => {
+                        let res = await fetch(`${SUPABASE_URL}/regis`, {
                             method: 'POST',
                             headers,
-                            body: JSON.stringify(payload)
+                            body: JSON.stringify(currentPayload)
                         });
 
-                        if (res.ok) {
+                        if (res.ok) return { ok: true };
+
+                        let errText = await res.text();
+
+                        // หากเจอ PGRST204 (ไม่พบคอลัมน์ที่ระบุใน Schema Cache)
+                        if (res.status === 400 && errText.includes('PGRST204')) {
+                            let retryPayload = { ...currentPayload };
+
+                            // กรณีคอลัมน์ 'ชื่อห้องพัก' ไม่พบ ให้ลองเปลี่ยนเป็น 'ชื่อห้อง'
+                            if (errText.includes("'ชื่อห้องพัก'") || errText.includes('ชื่อห้องพัก')) {
+                                delete retryPayload['ชื่อห้องพัก'];
+                                retryPayload['ชื่อห้อง'] = roomName;
+                            } 
+                            // กรณีชื่อคอลัมน์อื่นๆ ไม่ตรง ให้ดึงชื่อคอลัมน์จากข้อความแจ้งเตือนแล้วลบออก
+                            else {
+                                const match = errText.match(/Could not find the '([^']+)' column/);
+                                if (match && match[1]) {
+                                    delete retryPayload[match[1]];
+                                }
+                            }
+
+                            // พยายามบันทึกรอบใหม่
+                            let resRetry = await fetch(`${SUPABASE_URL}/regis`, {
+                                method: 'POST',
+                                headers,
+                                body: JSON.stringify(retryPayload)
+                            });
+
+                            if (resRetry.ok) return { ok: true };
+                            errText = await resRetry.text();
+                            res = resRetry;
+                        }
+
+                        let errDetail = errText;
+                        try {
+                            const parsed = JSON.parse(errText);
+                            errDetail = parsed.message || parsed.details || parsed.hint || errText;
+                        } catch(e) {}
+
+                        return { ok: false, status: res.status, message: errDetail };
+                    };
+
+                    try {
+                        const result = await saveToSupabase(payload);
+
+                        if (result.ok) {
                             showAlert('ลงทะเบียนสำเร็จ!');
                             await fetchInitialData();
                             setView('home');
                         } else {
-                            const errText = await res.text();
-                            let errDetail = errText;
-                            try {
-                                const parsed = JSON.parse(errText);
-                                errDetail = parsed.message || parsed.details || parsed.hint || errText;
-                            } catch(e) {}
-                            showAlert(`เกิดข้อผิดพลาดในการบันทึกข้อมูล (${res.status}): ${errDetail}`);
+                            showAlert(`เกิดข้อผิดพลาดในการบันทึกข้อมูล (${result.status}): ${result.message}`);
                         }
                     } catch (err) {
                         showAlert(`ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้: ${err.message}`);
